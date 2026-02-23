@@ -14,7 +14,7 @@ members = [
   "helix-vcs",
   "helix-parsec",
   "helix-stdx",
-  "xtask",
+  "xtask", "my_editor",
 ]
 
 default-members = [
