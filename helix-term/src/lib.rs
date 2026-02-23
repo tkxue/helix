@@ -18,7 +18,7 @@ use std::env::var_os;
 use std::path::Path;
 
 use futures_util::Future;
-mod handlers;
+pub mod handlers;
 
 use ignore::DirEntry;
 use url::Url;

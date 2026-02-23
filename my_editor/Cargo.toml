@@ -15,6 +15,10 @@ helix-core = { path = "../helix-core" }
 helix-view = { path = "../helix-view" }
 helix-term = { path = "../helix-term" }
 helix-loader = { path = "../helix-loader" }
+helix-lsp = { path = "../helix-lsp" }
+helix-event = { path = "../helix-event" }
+log = "0.4"
+serde_json = "1"
 anyhow = "1"
 toml = { workspace = true }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "io-util", "io-std", "time", "process", "macros", "fs", "parking_lot"] }
