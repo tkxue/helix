@@ -13,6 +13,10 @@ use helix_view::{
     graphics::{Rect, Color, Style, CursorKind},
     document::Mode,
 };
+use helix_term::keymap::{Keymaps, KeymapResult};
+use helix_term::job::Jobs;
+use helix_term::commands::Context as CmdContext;
+use helix_term::commands;
 
 use termina::Terminal as _;
 use tui::{backend::TerminaBackend};
@@ -82,6 +86,10 @@ async fn main() -> Result<()> {
         !event.is_escape() || matches!(event, termina::Event::Csi(termina::escape::csi::Csi::Mode(termina::escape::csi::Mode::ReportTheme(_))))
     });
 
+    let mut jobs = Jobs::new();
+    let mut keymaps = Keymaps::default();
+    let mut on_next_key: Option<Box<dyn FnOnce(&mut CmdContext, helix_view::input::KeyEvent)>> = None;
+
     loop {
         tokio::select! {
             Some(event) = events.next() => {
@@ -94,120 +102,63 @@ async fn main() -> Result<()> {
                         render(&mut editor, &mut terminal).await;
                     }
                     Ok(termina::Event::Key(event)) if event.kind == termina::event::KeyEventKind::Press || event.kind == termina::event::KeyEventKind::Repeat => {
-                        match editor.mode {
-                            Mode::Insert => match event.code {
-                                termina::event::KeyCode::Escape => {
-                                    editor.mode = Mode::Normal;
+                        let key: helix_view::input::KeyEvent = event.into();
+                        
+                        let mut cx = CmdContext {
+                            register: None,
+                            count: None,
+                            editor: &mut editor,
+                            callback: Vec::new(),
+                            on_next_key_callback: None,
+                            jobs: &mut jobs,
+                        };
+
+                        if let Some(cb) = on_next_key.take() {
+                            cb(&mut cx, key);
+                        } else {
+                            match keymaps.get(cx.editor.mode, key) {
+                                KeymapResult::Matched(cmd) => cmd.execute(&mut cx),
+                                KeymapResult::MatchedSequence(cmds) => {
+                                    for cmd in cmds {
+                                        cmd.execute(&mut cx);
+                                    }
                                 }
-                                termina::event::KeyCode::Char(c) => {
-                                    let (view, doc) = helix_view::current!(editor);
-                                    let text = doc.text().slice(..);
-                                    let selection = doc.selection(view.id);
-                                    let cursors = selection.clone().cursors(text);
-                                    let mut t = helix_core::Tendril::new();
-                                    t.push(c);
-                                    let transaction = helix_core::Transaction::insert(doc.text(), &cursors, t);
-                                    doc.apply(&transaction, view.id);
-                                }
-                                termina::event::KeyCode::Enter => {
-                                    let (view, doc) = helix_view::current!(editor);
-                                    let text = doc.text().slice(..);
-                                    let selection = doc.selection(view.id);
-                                    let cursors = selection.clone().cursors(text);
-                                    let t = helix_core::Tendril::from("\n");
-                                    let transaction = helix_core::Transaction::insert(doc.text(), &cursors, t);
-                                    doc.apply(&transaction, view.id);
-                                }
-                                termina::event::KeyCode::Backspace => {
-                                    let (view, doc) = helix_view::current!(editor);
-                                    let text = doc.text().slice(..);
-                                    let transaction = helix_core::Transaction::delete_by_selection(doc.text(), doc.selection(view.id), |range| {
-                                        let pos = range.cursor(text);
-                                        if pos == 0 {
-                                            (0, 0)
-                                        } else {
-                                            (helix_core::graphemes::nth_prev_grapheme_boundary(text, pos, 1), pos)
+                                KeymapResult::NotFound => {
+                                    if cx.editor.mode == Mode::Insert {
+                                        if let Some(ch) = key.char() {
+                                            commands::insert::insert_char(&mut cx, ch);
                                         }
-                                    });
-                                    doc.apply(&transaction, view.id);
+                                    }
+                                }
+                                KeymapResult::Cancelled(pending) => {
+                                    if cx.editor.mode == Mode::Insert {
+                                        for ev in pending {
+                                            match ev.char() {
+                                                Some(ch) => commands::insert::insert_char(&mut cx, ch),
+                                                None => {
+                                                    if let KeymapResult::Matched(cmd) = keymaps.get(Mode::Insert, ev) {
+                                                        cmd.execute(&mut cx);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                                 _ => {}
-                            },
-                            Mode::Normal => match event.code {
-                                termina::event::KeyCode::Char('i') => {
-                                    editor.mode = Mode::Insert;
-                                }
-                                termina::event::KeyCode::Char('q') => {
-                                    terminal.restore()?;
-                                    break;
-                                }
-                                termina::event::KeyCode::Left | termina::event::KeyCode::Char('h') => {
-                                    let (view, doc) = helix_view::current!(editor);
-                                    let text = doc.text().slice(..);
-                                    let selection = doc.selection(view.id).clone().transform(|range| {
-                                        let pos = range.cursor(text);
-                                        let new_pos = helix_core::graphemes::nth_prev_grapheme_boundary(text, pos, 1);
-                                        helix_core::Range::new(new_pos, new_pos)
-                                    });
-                                    doc.set_selection(view.id, selection);
-                                }
-                                termina::event::KeyCode::Right | termina::event::KeyCode::Char('l') => {
-                                    let (view, doc) = helix_view::current!(editor);
-                                    let text = doc.text().slice(..);
-                                    let selection = doc.selection(view.id).clone().transform(|range| {
-                                        let pos = range.cursor(text);
-                                        let new_pos = helix_core::graphemes::nth_next_grapheme_boundary(text, pos, 1);
-                                        helix_core::Range::new(new_pos, new_pos)
-                                    });
-                                    doc.set_selection(view.id, selection);
-                                }
-                                termina::event::KeyCode::Up | termina::event::KeyCode::Char('k') => {
-                                    let (view, doc) = helix_view::current!(editor);
-                                    let text = doc.text().slice(..);
-                                    let selection = doc.selection(view.id).clone().transform(|range| {
-                                        let pos = range.cursor(text);
-                                        let line = text.char_to_line(pos);
-                                        if line > 0 {
-                                            let col = pos - text.line_to_char(line);
-                                            let prev_line_start = text.line_to_char(line - 1);
-                                            let prev_line_len = text.line(line - 1).len_chars();
-                                            let max_col = prev_line_len.saturating_sub(1);
-                                            let new_col = std::cmp::min(col, max_col);
-                                            let new_pos = prev_line_start + new_col;
-                                            helix_core::Range::new(new_pos, new_pos)
-                                        } else {
-                                            range
-                                        }
-                                    });
-                                    doc.set_selection(view.id, selection);
-                                }
-                                termina::event::KeyCode::Down | termina::event::KeyCode::Char('j') => {
-                                    let (view, doc) = helix_view::current!(editor);
-                                    let text = doc.text().slice(..);
-                                    let selection = doc.selection(view.id).clone().transform(|range| {
-                                        let pos = range.cursor(text);
-                                        let line = text.char_to_line(pos);
-                                        if line + 1 < text.len_lines() {
-                                            let col = pos - text.line_to_char(line);
-                                            let next_line_start = text.line_to_char(line + 1);
-                                            let next_line_len = text.line(line + 1).len_chars();
-                                            let max_col = next_line_len.saturating_sub(1);
-                                            let new_col = std::cmp::min(col, max_col);
-                                            let new_pos = next_line_start + new_col;
-                                            helix_core::Range::new(new_pos, new_pos)
-                                        } else {
-                                            range
-                                        }
-                                    });
-                                    doc.set_selection(view.id, selection);
-                                }
-                                _ => {}
-                            },
-                            _ => {}
+                            }
+                        }
+                        
+                        if let Some((cb, _kind)) = cx.on_next_key_callback.take() {
+                            on_next_key = Some(cb);
                         }
                         
                         terminal.clear()?;
                         render(&mut editor, &mut terminal).await;
+
+                        if editor.should_close() {
+                            terminal.restore()?;
+                            break;
+                        }
                     }
                     _ => {}
                 }
