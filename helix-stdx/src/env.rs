@@ -53,11 +53,19 @@ pub fn env_var_is_set(env_var_name: &str) -> bool {
 }
 
 /// Checks if a binary with the given name exists.
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub fn binary_exists<T: AsRef<OsStr>>(binary_name: T) -> bool {
     which::which(binary_name).is_ok()
 }
 
+/// Checks if a binary with the given name exists.
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+pub fn binary_exists<T: AsRef<OsStr>>(_binary_name: T) -> bool {
+    false
+}
+
 /// Attempts to find a binary of the given name. See [which](https://linux.die.net/man/1/which).
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub fn which<T: AsRef<OsStr>>(
     binary_name: T,
 ) -> Result<std::path::PathBuf, ExecutableNotFoundError> {
@@ -65,6 +73,18 @@ pub fn which<T: AsRef<OsStr>>(
     which::which(binary_name).map_err(|err| ExecutableNotFoundError {
         command: binary_name.to_string_lossy().into_owned(),
         inner: err,
+    })
+}
+
+/// Attempts to find a binary of the given name. See [which](https://linux.die.net/man/1/which).
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+pub fn which<T: AsRef<OsStr>>(
+    binary_name: T,
+) -> Result<std::path::PathBuf, ExecutableNotFoundError> {
+    let binary_name = binary_name.as_ref();
+    Err(ExecutableNotFoundError {
+        command: binary_name.to_string_lossy().into_owned(),
+        inner: which::Error::CannotFindBinaryPath,
     })
 }
 

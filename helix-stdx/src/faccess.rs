@@ -484,12 +484,16 @@ mod imp {
         }
     }
 
-    pub fn copy_metadata(from: &path, to: &Path) -> io::Result<()> {
+    pub fn copy_metadata(from: &Path, to: &Path) -> io::Result<()> {
         let meta = std::fs::metadata(from)?;
         let perms = meta.permissions();
         std::fs::set_permissions(to, perms)?;
 
         Ok(())
+    }
+
+    pub fn hardlink_count(_p: &Path) -> io::Result<u64> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "hardlinks not supported on this platform"))
     }
 }
 
