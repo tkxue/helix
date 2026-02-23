@@ -44,26 +44,13 @@ use {signal_hook::consts::signal, signal_hook_tokio::Signals};
 #[cfg(windows)]
 type Signals = futures_util::stream::Empty<()>;
 
-#[cfg(all(not(windows), not(feature = "integration")))]
-use tui::backend::TerminaBackend;
-
-#[cfg(all(windows, not(feature = "integration")))]
-use tui::backend::CrosstermBackend;
+#[cfg(not(feature = "integration"))]
+type TerminalBackend = tui::backend::TerminaBackend;
 
 #[cfg(feature = "integration")]
-use tui::backend::TestBackend;
+type TerminalBackend = tui::backend::TestBackend;
 
-#[cfg(all(not(windows), not(feature = "integration")))]
-type TerminalBackend = TerminaBackend;
-#[cfg(all(windows, not(feature = "integration")))]
-type TerminalBackend = CrosstermBackend<std::io::Stdout>;
-#[cfg(feature = "integration")]
-type TerminalBackend = TestBackend;
-
-#[cfg(not(windows))]
 type TerminalEvent = termina::Event;
-#[cfg(windows)]
-type TerminalEvent = crossterm::event::Event;
 
 type Terminal = tui::terminal::Terminal<TerminalBackend>;
 
@@ -114,11 +101,9 @@ impl Application {
         theme_parent_dirs.extend(helix_loader::runtime_dirs().iter().cloned());
         let theme_loader = theme::Loader::new(&theme_parent_dirs);
 
-        #[cfg(all(not(windows), not(feature = "integration")))]
-        let backend = TerminaBackend::new((&config.editor).into())
+        #[cfg(not(feature = "integration"))]
+        let backend = TerminalBackend::new((&config.editor).into())
             .context("failed to create terminal backend")?;
-        #[cfg(all(windows, not(feature = "integration")))]
-        let backend = CrosstermBackend::new(std::io::stdout(), (&config.editor).into());
 
         #[cfg(feature = "integration")]
         let backend = TestBackend::new(120, 150);
@@ -725,25 +710,6 @@ impl Application {
                 );
                 true
             }
-            #[cfg(windows)]
-            TerminalEvent::Resize(width, height) => {
-                self.terminal
-                    .resize(Rect::new(0, 0, width, height))
-                    .expect("Unable to resize terminal");
-
-                let area = self.terminal.size();
-
-                self.compositor.resize(area);
-
-                self.compositor
-                    .handle_event(&Event::Resize(width, height), &mut cx)
-            }
-            #[cfg(windows)]
-            // Ignore keyboard release events.
-            crossterm::event::Event::Key(crossterm::event::KeyEvent {
-                kind: crossterm::event::KeyEventKind::Release,
-                ..
-            }) => false,
             event => self.compositor.handle_event(&event.into(), &mut cx),
         };
 
@@ -1262,11 +1228,6 @@ impl Application {
                     termina::Event::Csi(csi::Csi::Mode(csi::Mode::ReportTheme(_)))
                 )
         })
-    }
-
-    #[cfg(all(not(feature = "integration"), windows))]
-    pub fn event_stream(&self) -> impl Stream<Item = std::io::Result<TerminalEvent>> + Unpin {
-        crossterm::event::EventStream::new()
     }
 
     #[cfg(feature = "integration")]

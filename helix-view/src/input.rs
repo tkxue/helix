@@ -569,113 +569,6 @@ impl From<KeyEvent> for termina::event::KeyEvent {
     }
 }
 
-#[cfg(all(feature = "term", windows))]
-impl From<crossterm::event::Event> for Event {
-    fn from(event: crossterm::event::Event) -> Self {
-        match event {
-            crossterm::event::Event::Key(key) => Self::Key(key.into()),
-            crossterm::event::Event::Mouse(mouse) => Self::Mouse(mouse.into()),
-            crossterm::event::Event::Resize(w, h) => Self::Resize(w, h),
-            crossterm::event::Event::FocusGained => Self::FocusGained,
-            crossterm::event::Event::FocusLost => Self::FocusLost,
-            crossterm::event::Event::Paste(s) => Self::Paste(s),
-        }
-    }
-}
-
-#[cfg(all(feature = "term", windows))]
-impl From<crossterm::event::MouseEvent> for MouseEvent {
-    fn from(
-        crossterm::event::MouseEvent {
-            kind,
-            column,
-            row,
-            modifiers,
-        }: crossterm::event::MouseEvent,
-    ) -> Self {
-        Self {
-            kind: kind.into(),
-            column,
-            row,
-            modifiers: modifiers.into(),
-        }
-    }
-}
-
-#[cfg(all(feature = "term", windows))]
-impl From<crossterm::event::MouseEventKind> for MouseEventKind {
-    fn from(kind: crossterm::event::MouseEventKind) -> Self {
-        match kind {
-            crossterm::event::MouseEventKind::Down(button) => Self::Down(button.into()),
-            crossterm::event::MouseEventKind::Up(button) => Self::Up(button.into()),
-            crossterm::event::MouseEventKind::Drag(button) => Self::Drag(button.into()),
-            crossterm::event::MouseEventKind::Moved => Self::Moved,
-            crossterm::event::MouseEventKind::ScrollDown => Self::ScrollDown,
-            crossterm::event::MouseEventKind::ScrollUp => Self::ScrollUp,
-            crossterm::event::MouseEventKind::ScrollLeft => Self::ScrollLeft,
-            crossterm::event::MouseEventKind::ScrollRight => Self::ScrollRight,
-        }
-    }
-}
-
-#[cfg(all(feature = "term", windows))]
-impl From<crossterm::event::MouseButton> for MouseButton {
-    fn from(button: crossterm::event::MouseButton) -> Self {
-        match button {
-            crossterm::event::MouseButton::Left => MouseButton::Left,
-            crossterm::event::MouseButton::Right => MouseButton::Right,
-            crossterm::event::MouseButton::Middle => MouseButton::Middle,
-        }
-    }
-}
-
-#[cfg(all(feature = "term", windows))]
-impl From<crossterm::event::KeyEvent> for KeyEvent {
-    fn from(
-        crossterm::event::KeyEvent {
-            code, modifiers, ..
-        }: crossterm::event::KeyEvent,
-    ) -> Self {
-        if code == crossterm::event::KeyCode::BackTab {
-            // special case for BackTab -> Shift-Tab
-            let mut modifiers: KeyModifiers = modifiers.into();
-            modifiers.insert(KeyModifiers::SHIFT);
-            Self {
-                code: KeyCode::Tab,
-                modifiers,
-            }
-        } else {
-            Self {
-                code: code.into(),
-                modifiers: modifiers.into(),
-            }
-        }
-    }
-}
-
-#[cfg(all(feature = "term", windows))]
-impl From<KeyEvent> for crossterm::event::KeyEvent {
-    fn from(KeyEvent { code, modifiers }: KeyEvent) -> Self {
-        if code == KeyCode::Tab && modifiers.contains(KeyModifiers::SHIFT) {
-            // special case for Shift-Tab -> BackTab
-            let mut modifiers = modifiers;
-            modifiers.remove(KeyModifiers::SHIFT);
-            crossterm::event::KeyEvent {
-                code: crossterm::event::KeyCode::BackTab,
-                modifiers: modifiers.into(),
-                kind: crossterm::event::KeyEventKind::Press,
-                state: crossterm::event::KeyEventState::NONE,
-            }
-        } else {
-            crossterm::event::KeyEvent {
-                code: code.into(),
-                modifiers: modifiers.into(),
-                kind: crossterm::event::KeyEventKind::Press,
-                state: crossterm::event::KeyEventState::NONE,
-            }
-        }
-    }
-}
 pub fn parse_macro(keys_str: &str) -> anyhow::Result<Vec<KeyEvent>> {
     use anyhow::Context;
     let mut keys_res: anyhow::Result<_> = Ok(Vec::new());
@@ -1070,5 +963,95 @@ mod test {
         assert!(parse_macro("abc<C-").is_err());
         assert!(parse_macro("abc>123").is_err());
         assert!(parse_macro("wd<foo>").is_err());
+    }
+}
+
+pub struct VteEventParser {
+    pub events: Vec<Event>,
+    pub parser: vte::Parser,
+}
+
+impl VteEventParser {
+    pub fn new() -> Self {
+        Self { 
+            events: Vec::new(),
+            parser: vte::Parser::new(),
+        }
+    }
+
+    pub fn advance(&mut self, bytes: &[u8]) -> Vec<Event> {
+        let mut performer = VtePerformer { events: Vec::new() };
+        self.parser.advance(&mut performer, bytes);
+        performer.events
+    }
+}
+
+struct VtePerformer {
+    events: Vec<Event>,
+}
+
+impl vte::Perform for VtePerformer {
+    fn print(&mut self, c: char) {
+        self.events.push(Event::Key(KeyEvent {
+            code: KeyCode::Char(c),
+            modifiers: KeyModifiers::NONE,
+        }));
+    }
+
+    fn execute(&mut self, byte: u8) {
+        match byte {
+            0x08 | 0x7F => self.events.push(Event::Key(KeyEvent {
+                code: KeyCode::Backspace,
+                modifiers: KeyModifiers::NONE,
+            })),
+            0x09 => self.events.push(Event::Key(KeyEvent {
+                code: KeyCode::Tab,
+                modifiers: KeyModifiers::NONE,
+            })),
+            0x0D | 0x0A => self.events.push(Event::Key(KeyEvent {
+                code: KeyCode::Enter,
+                modifiers: KeyModifiers::NONE,
+            })),
+            0x1B => self.events.push(Event::Key(KeyEvent {
+                code: KeyCode::Esc,
+                modifiers: KeyModifiers::NONE,
+            })),
+            _ => {
+                if byte >= 0x01 && byte <= 0x1A {
+                    let char_code = (byte + 0x60) as char;
+                    if char_code != 'i' && char_code != 'm' && char_code != 'j' {
+                        self.events.push(Event::Key(KeyEvent {
+                            code: KeyCode::Char(char_code),
+                            modifiers: KeyModifiers::CONTROL,
+                        }));
+                    }
+                }
+            }
+        }
+    }
+
+    fn csi_dispatch(&mut self, _params: &vte::Params, intermediates: &[u8], ignore: bool, action: char) {
+        if ignore || intermediates.len() > 1 {
+            return;
+        }
+
+        if intermediates.is_empty() {
+            let code = match action {
+                'A' => Some(KeyCode::Up),
+                'B' => Some(KeyCode::Down),
+                'C' => Some(KeyCode::Right),
+                'D' => Some(KeyCode::Left),
+                'H' => Some(KeyCode::Home),
+                'F' => Some(KeyCode::End),
+                _ => None,
+            };
+
+            if let Some(c) = code {
+                self.events.push(Event::Key(KeyEvent {
+                    code: c,
+                    modifiers: KeyModifiers::NONE,
+                }));
+            }
+        }
     }
 }

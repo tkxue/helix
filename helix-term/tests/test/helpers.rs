@@ -13,7 +13,7 @@ use tempfile::NamedTempFile;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 #[cfg(windows)]
-use crossterm::event::{Event, KeyEvent};
+
 #[cfg(not(windows))]
 use termina::event::{Event, KeyEvent};
 

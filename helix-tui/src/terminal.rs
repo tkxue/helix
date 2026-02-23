@@ -55,7 +55,7 @@ pub struct TerminalOptions {
     pub viewport: Viewport,
 }
 
-/// Interface to the terminal backed by crossterm
+/// Interface to the terminal backed by a trait.
 #[derive(Debug)]
 pub struct Terminal<B>
 where
